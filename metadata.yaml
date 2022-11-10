@@ -1,4 +1,6 @@
 homepage: "https://stape.io/"
 versions:
+  - sha: 50c0e2463dc21b4ce35f57acad4db8b33662eae6
+    changeNotes: Add only restore cookie option.
   - sha: aea50a0785fa0f5a439fa3a9a3c49307346fa78d
     changeNotes: Initial release.
