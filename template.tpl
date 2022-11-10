@@ -57,6 +57,13 @@ ___TEMPLATE_PARAMETERS___
     "displayName": "Firebase Settings"
   },
   {
+    "type": "CHECKBOX",
+    "name": "onlyRestore",
+    "checkboxText": "Only restore cookies",
+    "simpleValueType": true,
+    "help": "It will prevent writing cookies to the Firestore. Useful if you want to synch cookies between sites only in one direction."
+  },
+  {
     "type": "GROUP",
     "name": "identifiersGroup",
     "displayName": "List of identifiers",
@@ -200,7 +207,7 @@ function restoreCookies(document) {
         });
     }
 
-    if (getObjectLength(cookiesToStore) === 0) {
+    if (getObjectLength(cookiesToStore) === 0 || data.onlyRestore) {
         data.gtmOnSuccess();
 
         return;

@@ -46,7 +46,7 @@ function restoreCookies(document) {
         });
     }
 
-    if (getObjectLength(cookiesToStore) === 0) {
+    if (getObjectLength(cookiesToStore) === 0 || data.onlyRestore) {
         data.gtmOnSuccess();
 
         return;
