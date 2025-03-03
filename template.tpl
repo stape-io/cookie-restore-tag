@@ -30,6 +30,22 @@ ___TEMPLATE_PARAMETERS___
 
 [
   {
+    "type": "RADIO",
+    "name": "flowType",
+    "radioItems": [
+      {
+        "value": "stape",
+        "displayValue": "Stape store"
+      },
+      {
+        "value": "firebase",
+        "displayValue": "Firebase"
+      }
+    ],
+    "simpleValueType": true,
+    "defaultValue": "stape"
+  },
+  {
     "type": "GROUP",
     "name": "firebaseGroup",
     "groupStyle": "NO_ZIPPY",
@@ -54,7 +70,14 @@ ___TEMPLATE_PARAMETERS___
         "simpleValueType": true
       }
     ],
-    "displayName": "Firebase Settings"
+    "displayName": "Firebase Settings",
+    "enablingConditions": [
+      {
+        "paramName": "flowType",
+        "paramValue": "firebase",
+        "type": "EQUALS"
+      }
+    ]
   },
   {
     "type": "CHECKBOX",
@@ -153,6 +176,34 @@ ___TEMPLATE_PARAMETERS___
       }
     ],
     "help": "\u003cb\u003eCookie lifetime examples:\u003c/b\u003e\u003cbr\u003e 2 years \u003d 63072000 seconds \u003cbr\u003e1 year \u003d 31536000 seconds \u003cbr\u003e6 month \u003d 15780000 seconds \u003cbr\u003e3 month \u003d 7890000 seconds \u003cbr\u003e1 month \u003d 2630000 seconds \u003cbr\u003e2 weeks \u003d 1209600 seconds"
+  },
+  {
+    "type": "GROUP",
+    "name": "logsGroup",
+    "displayName": "Logs Settings",
+    "groupStyle": "ZIPPY_CLOSED",
+    "subParams": [
+      {
+        "type": "RADIO",
+        "name": "logType",
+        "radioItems": [
+          {
+            "value": "no",
+            "displayValue": "Do not log"
+          },
+          {
+            "value": "debug",
+            "displayValue": "Log to console during debug and preview"
+          },
+          {
+            "value": "always",
+            "displayValue": "Always log to console"
+          }
+        ],
+        "simpleValueType": true,
+        "defaultValue": "debug"
+      }
+    ]
   }
 ]
 
@@ -162,6 +213,18 @@ ___SANDBOXED_JS_FOR_SERVER___
 const setCookie = require('setCookie');
 const getCookieValues = require('getCookieValues');
 const Firestore = require('Firestore');
+const getRequestHeader = require('getRequestHeader');
+const sendHttpRequest = require('sendHttpRequest');
+const JSON = require('JSON');
+const encodeUriComponent = require('encodeUriComponent');
+const logToConsole = require('logToConsole');
+const getContainerVersion = require('getContainerVersion');
+const Object = require('Object');
+
+let storeUrl = getStoreUrl();
+let documentKey = 'cookie_restore';
+let storeDocumentUrl = storeUrl + '/' + enc(documentKey);
+const isLoggingEnabled = determinateIsLoggingEnabled();
 
 const identifiersValues = getIdentifiersValues(data.identifiers);
 if (identifiersValues.length === 0) {
@@ -170,18 +233,52 @@ if (identifiersValues.length === 0) {
     return;
 }
 
-let firebaseOptions = {limit: 1};
-if (data.firebaseProjectId) firebaseOptions.projectId = data.firebaseProjectId;
-
-Firestore.query(data.firebasePath, [['identifiersValues', 'array-contains-any', identifiersValues]], firebaseOptions)
-    .then((documents) => {
-        return restoreCookies(documents && documents.length > 0 ? documents[0] : {});
-    }, () => {
+let firebaseOptions = { limit: 1 };
+if (data.flowType === 'firebase') {
+  if (data.firebaseProjectId)
+    firebaseOptions.projectId = data.firebaseProjectId;
+  Firestore.query(
+    data.firebasePath,
+    [['identifiersValues', 'array-contains-any', identifiersValues]],
+    firebaseOptions,
+  ).then(
+    (documents) => {
+      return restoreCookies(
+        documents && documents.length > 0 ? documents[0] : {},
+      );
+    },
+    () => {
         return restoreCookies({});
+    },
+  );
+} else {
+  sendHttpRequest(storeDocumentUrl, { method: 'GET' }).then((documents) => {
+    let body = JSON.parse(documents.body);
+    let identifiers = body.data ? Object.keys(body.data) : [];
+    log({
+      Name: 'CookieRestore',
+      Type: 'Response',
+      TraceId: '',
+      EventName: 'CookieRestoreGET',
+      RequestMethod: 'GET',
+      RequestUrl: storeUrl,
+      RequestBody: documents.body,
     });
+    let preparedData = prepareStapeStoreData(body.data, data.identifiers);
+    return restoreCookies({
+      data: preparedData,
+      identifiers: identifiers,
+      stapeStoreData: body.data,
+    });
+  });
+}
 
 function restoreCookies(document) {
     let storedData = document.data || {};
+  let mergedIdentifiers = mergeIdentifiers(
+    storedData.identifiers,
+    data.identifiers,
+  );
     let cookiesToStore = {};
 
     if (data.cookies && data.cookies.length > 0) {
@@ -191,18 +288,9 @@ function restoreCookies(document) {
             if (cookies && cookies.length > 0) {
                 cookiesToStore[cookieObject.name] = cookies;
             } else if (storedData.cookies && storedData.cookies[cookieObject.name]) {
-                storedData.cookies[cookieObject.name].forEach(function (cookie) {
-                    setCookie(cookieObject.name, cookie, {
-                        domain: 'auto',
-                        path: '/',
-                        samesite: 'Lax',
-                        secure: true,
-                        'max-age': cookieObject.lifetime,
-                        httpOnly: false
-                    }, true);
-                });
-
-                cookiesToStore[cookieObject.name] = storedData.cookies[cookieObject.name];
+        setCookieFunc(cookieObject, storedData.cookies[cookieObject.name][0]);
+        cookiesToStore[cookieObject.name] =
+          storedData.cookies[cookieObject.name];
             }
         });
     }
@@ -213,17 +301,66 @@ function restoreCookies(document) {
         return;
     }
 
-    let mergedIdentifiers = mergeIdentifiers(storedData.identifiers, data.identifiers);
+  if (data.flowType === 'firebase') {
     let cookiesDataToStore = {
         identifiers: mergedIdentifiers,
         identifiersValues: getIdentifiersValues(mergedIdentifiers),
         cookies: cookiesToStore,
     };
-
-    Firestore.write(document.id || data.firebasePath, cookiesDataToStore, firebaseOptions)
-        .then(() => {
+    Firestore.write(
+      document.id || data.firebasePath,
+      cookiesDataToStore,
+      firebaseOptions,
+    ).then(() => {
             data.gtmOnSuccess();
         }, data.gtmOnFailure);
+  } else {
+    let stapeStoreData = document.stapeStoreData || {};
+    mergedIdentifiers.forEach(function (identifier) {
+      if (!stapeStoreData[identifier.name]) {
+        stapeStoreData[identifier.name] = {};
+      }
+      stapeStoreData[identifier.name][identifier.value] = cookiesToStore;
+    });
+
+    sendHttpRequest(
+      storeDocumentUrl,
+      { method: 'PUT', headers: { 'Content-Type': 'application/json' } },
+      JSON.stringify(stapeStoreData),
+    ).then(function (response) {
+      let statusCode = response.statusCode;
+      log({
+        Name: 'CookierRestore',
+        Type: 'Response',
+        TraceId: '',
+        EventName: 'CookierRestorePUT',
+        ResponseStatusCode: statusCode,
+        ResponseHeaders: {},
+        ResponseBody: JSON.stringify(response),
+      });
+      if (statusCode >= 200 && statusCode < 300) {
+        data.gtmOnSuccess();
+      } else {
+        data.gtmOnFailure();
+      }
+    });
+  }
+}
+
+function setCookieFunc(cookieObject, cookieData) {
+  setCookie(
+    cookieObject.name,
+    cookieData,
+    {
+      domain: 'auto',
+      path: '/',
+      samesite: 'Lax',
+      secure: true,
+      'max-age': cookieObject.lifetime,
+      httpOnly: false,
+    },
+    true,
+  );
 }
 
 function getIdentifiersValues(identifiers) {
@@ -278,6 +415,79 @@ function getObjectLength(object) {
     return length;
 }
 
+function prepareStapeStoreData(bodyData, identifiers) {
+  let cookies = {};
+  let addedIdentifiers = {};
+
+  if (bodyData) {
+    identifiers.forEach(function (identifier) {
+      if (
+        bodyData[identifier.name] &&
+        bodyData[identifier.name][identifier.value]
+      ) {
+        addedIdentifiers[identifier.name] = identifier.value;
+        let cookieList = Object.keys(
+          bodyData[identifier.name][identifier.value],
+        );
+        cookieList.forEach(function (cookieName) {
+          cookies[cookieName] =
+            bodyData[identifier.name][identifier.value][cookieName];
+        });
+      }
+    });
+  }
+  return { cookies: cookies, identifiers: addedIdentifiers };
+}
+
+function getStoreUrl() {
+  const containerIdentifier = getRequestHeader('x-gtm-identifier');
+  const defaultDomain = getRequestHeader('x-gtm-default-domain');
+  const containerApiKey = getRequestHeader('x-gtm-api-key');
+
+  return (
+    'https://' +
+    enc(containerIdentifier) +
+    '.' +
+    enc(defaultDomain) +
+    '/stape-api/' +
+    enc(containerApiKey) +
+    '/v1/store'
+  );
+}
+
+function enc(data) {
+  data = data || '';
+  return encodeUriComponent(data);
+}
+
+function log(logObject) {
+  if (isLoggingEnabled) {
+    logToConsole(JSON.stringify(logObject));
+  }
+}
+
+function determinateIsLoggingEnabled() {
+  const containerVersion = getContainerVersion();
+  const isDebug = !!(
+    containerVersion &&
+    (containerVersion.debugMode || containerVersion.previewMode)
+  );
+
+  if (!data.logType) {
+    return isDebug;
+  }
+
+  if (data.logType === 'no') {
+    return false;
+  }
+
+  if (data.logType === 'debug') {
+    return isDebug;
+  }
+
+  return data.logType === 'always';
+}
+
 
 ___SERVER_PERMISSIONS___
 
@@ -329,6 +539,10 @@ ___SERVER_PERMISSIONS___
                   {
                     "type": 1,
                     "string": "operation"
+                  },
+                  {
+                    "type": 1,
+                    "string": "databaseId"
                   }
                 ],
                 "mapValue": [
@@ -343,6 +557,10 @@ ___SERVER_PERMISSIONS___
                   {
                     "type": 1,
                     "string": "read_write"
+                  },
+                  {
+                    "type": 1,
+                    "string": "(default)"
                   }
                 ]
               }
@@ -422,6 +640,165 @@ ___SERVER_PERMISSIONS___
     },
     "clientAnnotations": {
       "isEditedByUser": true
+    },
+    "isRequired": true
+  },
+  {
+    "instance": {
+      "key": {
+        "publicId": "read_request",
+        "versionId": "1"
+      },
+      "param": [
+        {
+          "key": "headerWhitelist",
+          "value": {
+            "type": 2,
+            "listItem": [
+              {
+                "type": 3,
+                "mapKey": [
+                  {
+                    "type": 1,
+                    "string": "headerName"
+                  }
+                ],
+                "mapValue": [
+                  {
+                    "type": 1,
+                    "string": "x-gtm-identifier"
+                  }
+                ]
+              },
+              {
+                "type": 3,
+                "mapKey": [
+                  {
+                    "type": 1,
+                    "string": "headerName"
+                  }
+                ],
+                "mapValue": [
+                  {
+                    "type": 1,
+                    "string": "x-gtm-default-domain"
+                  }
+                ]
+              },
+              {
+                "type": 3,
+                "mapKey": [
+                  {
+                    "type": 1,
+                    "string": "headerName"
+                  }
+                ],
+                "mapValue": [
+                  {
+                    "type": 1,
+                    "string": "x-gtm-api-key"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "key": "headersAllowed",
+          "value": {
+            "type": 8,
+            "boolean": true
+          }
+        },
+        {
+          "key": "requestAccess",
+          "value": {
+            "type": 1,
+            "string": "specific"
+          }
+        },
+        {
+          "key": "headerAccess",
+          "value": {
+            "type": 1,
+            "string": "specific"
+          }
+        },
+        {
+          "key": "queryParameterAccess",
+          "value": {
+            "type": 1,
+            "string": "any"
+          }
+        }
+      ]
+    },
+    "clientAnnotations": {
+      "isEditedByUser": true
+    },
+    "isRequired": true
+  },
+  {
+    "instance": {
+      "key": {
+        "publicId": "send_http",
+        "versionId": "1"
+      },
+      "param": [
+        {
+          "key": "allowedUrls",
+          "value": {
+            "type": 1,
+            "string": "specific"
+          }
+        },
+        {
+          "key": "urls",
+          "value": {
+            "type": 2,
+            "listItem": [
+              {
+                "type": 1,
+                "string": "https://*.stape.io/"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "clientAnnotations": {
+      "isEditedByUser": true
+    },
+    "isRequired": true
+  },
+  {
+    "instance": {
+      "key": {
+        "publicId": "logging",
+        "versionId": "1"
+      },
+      "param": [
+        {
+          "key": "environments",
+          "value": {
+            "type": 1,
+            "string": "debug"
+          }
+        }
+      ]
+    },
+    "clientAnnotations": {
+      "isEditedByUser": true
+    },
+    "isRequired": true
+  },
+  {
+    "instance": {
+      "key": {
+        "publicId": "read_container_data",
+        "versionId": "1"
+      },
+      "param": []
     },
     "isRequired": true
   }
