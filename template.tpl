@@ -220,11 +220,13 @@ const encodeUriComponent = require('encodeUriComponent');
 const logToConsole = require('logToConsole');
 const getContainerVersion = require('getContainerVersion');
 const Object = require('Object');
+const makeString = require('makeString');
+const generateRandom = require('generateRandom');
+const getTimestampMillis = require('getTimestampMillis');
 
-let storeUrl = getStoreUrl();
-let documentKey = 'cookie_restore';
-let storeDocumentUrl = storeUrl + '/' + enc(documentKey);
 const isLoggingEnabled = determinateIsLoggingEnabled();
+const traceId = isLoggingEnabled ? getRequestHeader('trace-id') : undefined;
+const storeUrl = getStoreUrl();
 
 const identifiersValues = getIdentifiersValues(data.identifiers);
 if (identifiersValues.length === 0) {
@@ -252,24 +254,31 @@ if (data.flowType === 'firebase') {
     },
   );
 } else {
-  sendHttpRequest(storeDocumentUrl, { method: 'GET' }).then((documents) => {
+  let filters = getStoreFilter(identifiersValues);
+  sendHttpRequest(
+    storeUrl,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' } },
+    JSON.stringify({
+      limit: 1,
+      data: filters,
+    }),
+  ).then((documents) => {
     let body = JSON.parse(documents.body);
-    let identifiers = body.data ? Object.keys(body.data) : [];
+    let preparedData = { data: {}, key: '' };
+    if (body && body.length > 0) {
+      preparedData = body[0].data;
+      preparedData.key = body[0].key;
+    }
     log({
       Name: 'CookieRestore',
       Type: 'Response',
-      TraceId: '',
-      EventName: 'CookieRestoreGET',
-      RequestMethod: 'GET',
+      TraceId: traceId,
+      EventName: 'CookieRestorePOST',
+      RequestMethod: 'POST',
       RequestUrl: storeUrl,
-      RequestBody: documents.body,
+      RequestBody: documents,
     });
-    let preparedData = prepareStapeStoreData(body.data, data.identifiers);
-    return restoreCookies({
-      data: preparedData,
-      identifiers: identifiers,
-      stapeStoreData: body.data,
-    });
+    return restoreCookies({ data: preparedData });
   });
 }
 
@@ -300,13 +309,12 @@ function restoreCookies(document) {
 
         return;
     }
-
-  if (data.flowType === 'firebase') {
     let cookiesDataToStore = {
         identifiers: mergedIdentifiers,
         identifiersValues: getIdentifiersValues(mergedIdentifiers),
         cookies: cookiesToStore,
     };
+  if (data.flowType === 'firebase') {
     Firestore.write(
       document.id || data.firebasePath,
       cookiesDataToStore,
@@ -315,24 +323,18 @@ function restoreCookies(document) {
             data.gtmOnSuccess();
         }, data.gtmOnFailure);
   } else {
-    let stapeStoreData = document.stapeStoreData || {};
-    mergedIdentifiers.forEach(function (identifier) {
-      if (!stapeStoreData[identifier.name]) {
-        stapeStoreData[identifier.name] = {};
-      }
-      stapeStoreData[identifier.name][identifier.value] = cookiesToStore;
-    });
-
+    let documentKey = storedData.key || generateDocumentKey();
+    let storeDocumentUrl = storeUrl + '/' + enc(documentKey);
     sendHttpRequest(
       storeDocumentUrl,
       { method: 'PUT', headers: { 'Content-Type': 'application/json' } },
-      JSON.stringify(stapeStoreData),
+      JSON.stringify(cookiesDataToStore),
     ).then(function (response) {
       let statusCode = response.statusCode;
       log({
         Name: 'CookierRestore',
         Type: 'Response',
-        TraceId: '',
+        TraceId: traceId,
         EventName: 'CookierRestorePUT',
         ResponseStatusCode: statusCode,
         ResponseHeaders: {},
@@ -345,6 +347,15 @@ function restoreCookies(document) {
       }
     });
   }
+}
+
+function getStoreFilter(values) {
+  return [['identifiersValues', 'array-contains-any', values]];
+}
+
+function generateDocumentKey() {
+  const rnd = makeString(generateRandom(1000000000, 2147483647));
+  return 'cookie_' + makeString(getTimestampMillis()) + rnd;
 }
 
 function setCookieFunc(cookieObject, cookieData) {
@@ -413,30 +424,6 @@ function getObjectLength(object) {
         }
     }
     return length;
-}
-
-function prepareStapeStoreData(bodyData, identifiers) {
-  let cookies = {};
-  let addedIdentifiers = {};
-
-  if (bodyData) {
-    identifiers.forEach(function (identifier) {
-      if (
-        bodyData[identifier.name] &&
-        bodyData[identifier.name][identifier.value]
-      ) {
-        addedIdentifiers[identifier.name] = identifier.value;
-        let cookieList = Object.keys(
-          bodyData[identifier.name][identifier.value],
-        );
-        cookieList.forEach(function (cookieName) {
-          cookies[cookieName] =
-            bodyData[identifier.name][identifier.value][cookieName];
-        });
-      }
-    });
-  }
-  return { cookies: cookies, identifiers: addedIdentifiers };
 }
 
 function getStoreUrl() {
@@ -697,6 +684,21 @@ ___SERVER_PERMISSIONS___
                   {
                     "type": 1,
                     "string": "x-gtm-api-key"
+                  }
+                ]
+              },
+              {
+                "type": 3,
+                "mapKey": [
+                  {
+                    "type": 1,
+                    "string": "headerName"
+                  }
+                ],
+                "mapValue": [
+                  {
+                    "type": 1,
+                    "string": "trace-id"
                   }
                 ]
               }
