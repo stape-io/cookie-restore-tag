@@ -179,6 +179,28 @@ ___TEMPLATE_PARAMETERS___
   },
   {
     "type": "GROUP",
+    "name": "stapeStoreSettingsGroup",
+    "displayName": "Stape Store Settings",
+    "groupStyle": "ZIPPY_OPEN_ON_PARAM",
+    "subParams": [
+      {
+        "type": "TEXT",
+        "name": "collectionName",
+        "displayName": "Collection Name",
+        "simpleValueType": true,
+        "help": "The name of the collection on the Stape Store that contains (or will contain) the document with the data.\n\u003cbr/\u003e\u003cbr/\u003e\nIf not set, the \u003ci\u003edefault\u003c/i\u003e Collection Name will be used."
+      }
+    ],
+    "enablingConditions": [
+      {
+        "paramName": "flowType",
+        "paramValue": "stape",
+        "type": "EQUALS"
+      }
+    ]
+  },
+  {
+    "type": "GROUP",
     "name": "logsGroup",
     "displayName": "Logs Settings",
     "groupStyle": "ZIPPY_CLOSED",
@@ -290,6 +312,7 @@ const logToConsole = require('logToConsole');
 const getContainerVersion = require('getContainerVersion');
 const makeString = require('makeString');
 const generateRandom = require('generateRandom');
+const getType = require('getType');
 const getTimestampMillis = require('getTimestampMillis');
 const BigQuery = require('BigQuery');
 
@@ -298,12 +321,9 @@ const BigQuery = require('BigQuery');
 
 const traceId = getRequestHeader('trace-id');
 
-const storeUrl = getStoreUrl();
-
 const identifiersValues = getIdentifiersValues(data.identifiers);
 if (identifiersValues.length === 0) {
   data.gtmOnSuccess();
-
   return;
 }
 
@@ -323,32 +343,57 @@ if (data.flowType === 'firebase') {
     }
   );
 } else {
-  let filters = getStoreFilter(identifiersValues);
+  const storeUrl = getStoreBaseUrl(data);
+  const postBody = {
+    filter: {
+      operator: 'and',
+      conditions: [
+        {
+          field: 'identifiersValues',
+          operator: 'array-contains-any',
+          value: identifiersValues
+        }
+      ]
+    },
+    pagination: {
+      limit: 1
+    }
+  };
+
+  log({
+    Name: 'CookieRestore',
+    Type: 'Request',
+    TraceId: traceId,
+    EventName: 'CookieRestorePOST',
+    RequestMethod: 'POST',
+    RequestUrl: storeUrl,
+    RequestBody: postBody
+  });
+
   sendHttpRequest(
     storeUrl,
     { method: 'POST', headers: { 'Content-Type': 'application/json' } },
-    JSON.stringify({
-      limit: 1,
-      data: filters
-    })
-  ).then((documents) => {
-    const body = JSON.parse(documents.body);
-    let preparedData = { data: {}, key: '' };
-    if (body && body.length > 0) {
-      preparedData = body[0].data;
-      preparedData.key = body[0].key;
-    }
+    JSON.stringify(postBody)
+  ).then((response) => {
+    const body = JSON.parse(response.body || '{}');
+    const document =
+      getType(body) === 'object' &&
+      getType(body.data) === 'object' &&
+      getType(body.data.items) === 'array' &&
+      getType(body.data.items[0]) === 'object'
+        ? body.data.items[0]
+        : {};
 
     log({
       Name: 'CookieRestore',
       Type: 'Response',
       TraceId: traceId,
       EventName: 'CookieRestorePOST',
-      RequestMethod: 'POST',
-      RequestUrl: storeUrl,
-      RequestBody: documents
+      ResponseStatusCode: response.statusCode,
+      ResponseHeaders: {},
+      ResponseBody: response.body
     });
-    return restoreCookies({ data: preparedData });
+    return restoreCookies(document);
   });
 }
 
@@ -392,13 +437,24 @@ function restoreCookies(document) {
       data.gtmOnFailure
     );
   } else {
-    const documentKey = storedData.key || generateDocumentKey();
-    const storeDocumentUrl = storeUrl + '/' + enc(documentKey);
+    const documentId = document.key || generateDocumentKey();
+    const storeDocumentUrl = getDocumentUrl(data, documentId);
+
+    log({
+      Name: 'CookieRestore',
+      Type: 'Request',
+      TraceId: traceId,
+      EventName: 'CookierRestorePUT',
+      RequestMethod: 'PUT',
+      RequestUrl: storeDocumentUrl,
+      RequestBody: cookiesDataToStore
+    });
+
     sendHttpRequest(
       storeDocumentUrl,
       { method: 'PUT', headers: { 'Content-Type': 'application/json' } },
       JSON.stringify(cookiesDataToStore)
-    ).then(function (response) {
+    ).then((response) => {
       const statusCode = response.statusCode;
       log({
         Name: 'CookierRestore',
@@ -407,8 +463,9 @@ function restoreCookies(document) {
         EventName: 'CookierRestorePUT',
         ResponseStatusCode: statusCode,
         ResponseHeaders: {},
-        ResponseBody: JSON.stringify(response)
+        ResponseBody: response.body
       });
+
       if (statusCode >= 200 && statusCode < 300) {
         data.gtmOnSuccess();
       } else {
@@ -416,10 +473,6 @@ function restoreCookies(document) {
       }
     });
   }
-}
-
-function getStoreFilter(values) {
-  return [['identifiersValues', 'array-contains-any', values]];
 }
 
 function generateDocumentKey() {
@@ -484,10 +537,11 @@ function mergeIdentifiers(oldIdentifiers, newIdentifiers) {
   return identifiers;
 }
 
-function getStoreUrl() {
+function getStoreBaseUrl(data) {
   const containerIdentifier = getRequestHeader('x-gtm-identifier');
   const defaultDomain = getRequestHeader('x-gtm-default-domain');
   const containerApiKey = getRequestHeader('x-gtm-api-key');
+  const collectionPath = 'collections/' + enc(data.collectionName || 'default') + '/documents';
 
   return (
     'https://' +
@@ -496,8 +550,14 @@ function getStoreUrl() {
     enc(defaultDomain) +
     '/stape-api/' +
     enc(containerApiKey) +
-    '/v1/store'
+    '/v2/store/' +
+    collectionPath
   );
+}
+
+function getDocumentUrl(data, documentId) {
+  const storeBaseUrl = getStoreBaseUrl(data);
+  return storeBaseUrl + '/' + enc(documentId);
 }
 
 /*==============================================================================
@@ -892,6 +952,10 @@ ___SERVER_PERMISSIONS___
               {
                 "type": 1,
                 "string": "https://*.stape.io/"
+              },
+              {
+                "type": 1,
+                "string": "https://*.stape.net/"
               }
             ]
           }
