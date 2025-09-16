@@ -42,7 +42,7 @@ if (data.flowType === 'firebase') {
     }
   );
 } else {
-  const storeUrl = getStoreBaseUrl(data);
+  const storeUrl = getStapeStoreBaseUrl(data);
   const postBody = {
     filter: {
       operator: 'and',
@@ -137,7 +137,7 @@ function restoreCookies(document) {
     );
   } else {
     const documentId = document.key || generateDocumentKey();
-    const storeDocumentUrl = getDocumentUrl(data, documentId);
+    const storeDocumentUrl = getStapeStoreDocumentUrl(data, documentId);
 
     log({
       Name: 'CookieRestore',
@@ -236,11 +236,12 @@ function mergeIdentifiers(oldIdentifiers, newIdentifiers) {
   return identifiers;
 }
 
-function getStoreBaseUrl(data) {
+function getStapeStoreBaseUrl(data) {
   const containerIdentifier = getRequestHeader('x-gtm-identifier');
   const defaultDomain = getRequestHeader('x-gtm-default-domain');
   const containerApiKey = getRequestHeader('x-gtm-api-key');
-  const collectionPath = 'collections/' + enc(data.collectionName || 'default') + '/documents';
+  const collectionPath =
+    'collections/' + enc(data.stapeStoreCollectionName || 'default') + '/documents';
 
   return (
     'https://' +
@@ -254,8 +255,8 @@ function getStoreBaseUrl(data) {
   );
 }
 
-function getDocumentUrl(data, documentId) {
-  const storeBaseUrl = getStoreBaseUrl(data);
+function getStapeStoreDocumentUrl(data, documentId) {
+  const storeBaseUrl = getStapeStoreBaseUrl(data);
   return storeBaseUrl + '/' + enc(documentId);
 }
 

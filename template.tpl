@@ -46,40 +46,6 @@ ___TEMPLATE_PARAMETERS___
     "defaultValue": "stape"
   },
   {
-    "type": "GROUP",
-    "name": "firebaseGroup",
-    "groupStyle": "NO_ZIPPY",
-    "subParams": [
-      {
-        "type": "TEXT",
-        "name": "firebasePath",
-        "displayName": "Firebase Path",
-        "simpleValueType": true,
-        "help": "The tag uses Firebase to store cookies. You can choose any key for a document that will store the cookies values.",
-        "valueValidators": [
-          {
-            "type": "NON_EMPTY"
-          }
-        ],
-        "defaultValue": "stape-cookie-restore"
-      },
-      {
-        "type": "TEXT",
-        "name": "firebaseProjectId",
-        "displayName": "Firebase Project ID",
-        "simpleValueType": true
-      }
-    ],
-    "displayName": "Firebase Settings",
-    "enablingConditions": [
-      {
-        "paramName": "flowType",
-        "paramValue": "firebase",
-        "type": "EQUALS"
-      }
-    ]
-  },
-  {
     "type": "CHECKBOX",
     "name": "onlyRestore",
     "checkboxText": "Only restore cookies",
@@ -179,14 +145,48 @@ ___TEMPLATE_PARAMETERS___
   },
   {
     "type": "GROUP",
+    "name": "firebaseGroup",
+    "groupStyle": "ZIPPY_OPEN_ON_PARAM",
+    "subParams": [
+      {
+        "type": "TEXT",
+        "name": "firebasePath",
+        "displayName": "Firebase Path",
+        "simpleValueType": true,
+        "help": "The tag uses Firebase to store cookies. You can choose any key for a document that will store the cookies values.",
+        "valueValidators": [
+          {
+            "type": "NON_EMPTY"
+          }
+        ],
+        "defaultValue": "stape-cookie-restore"
+      },
+      {
+        "type": "TEXT",
+        "name": "firebaseProjectId",
+        "displayName": "Firebase Project ID",
+        "simpleValueType": true
+      }
+    ],
+    "displayName": "Firebase Settings",
+    "enablingConditions": [
+      {
+        "paramName": "flowType",
+        "paramValue": "firebase",
+        "type": "EQUALS"
+      }
+    ]
+  },
+  {
+    "type": "GROUP",
     "name": "stapeStoreSettingsGroup",
     "displayName": "Stape Store Settings",
     "groupStyle": "ZIPPY_OPEN_ON_PARAM",
     "subParams": [
       {
         "type": "TEXT",
-        "name": "collectionName",
-        "displayName": "Collection Name",
+        "name": "stapeStoreCollectionName",
+        "displayName": "Stape Store Collection Name",
         "simpleValueType": true,
         "help": "The name of the collection on the Stape Store that contains (or will contain) the document with the data.\n\u003cbr/\u003e\u003cbr/\u003e\nIf not set, the \u003ci\u003edefault\u003c/i\u003e Collection Name will be used."
       }
@@ -343,7 +343,7 @@ if (data.flowType === 'firebase') {
     }
   );
 } else {
-  const storeUrl = getStoreBaseUrl(data);
+  const storeUrl = getStapeStoreBaseUrl(data);
   const postBody = {
     filter: {
       operator: 'and',
@@ -438,7 +438,7 @@ function restoreCookies(document) {
     );
   } else {
     const documentId = document.key || generateDocumentKey();
-    const storeDocumentUrl = getDocumentUrl(data, documentId);
+    const storeDocumentUrl = getStapeStoreDocumentUrl(data, documentId);
 
     log({
       Name: 'CookieRestore',
@@ -537,11 +537,12 @@ function mergeIdentifiers(oldIdentifiers, newIdentifiers) {
   return identifiers;
 }
 
-function getStoreBaseUrl(data) {
+function getStapeStoreBaseUrl(data) {
   const containerIdentifier = getRequestHeader('x-gtm-identifier');
   const defaultDomain = getRequestHeader('x-gtm-default-domain');
   const containerApiKey = getRequestHeader('x-gtm-api-key');
-  const collectionPath = 'collections/' + enc(data.collectionName || 'default') + '/documents';
+  const collectionPath =
+    'collections/' + enc(data.stapeStoreCollectionName || 'default') + '/documents';
 
   return (
     'https://' +
@@ -555,8 +556,8 @@ function getStoreBaseUrl(data) {
   );
 }
 
-function getDocumentUrl(data, documentId) {
-  const storeBaseUrl = getStoreBaseUrl(data);
+function getStapeStoreDocumentUrl(data, documentId) {
+  const storeBaseUrl = getStapeStoreBaseUrl(data);
   return storeBaseUrl + '/' + enc(documentId);
 }
 
