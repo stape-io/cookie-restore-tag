@@ -138,10 +138,11 @@ ___TEMPLATE_PARAMETERS___
             ]
           }
         ],
-        "alwaysInSummary": true
+        "alwaysInSummary": true,
+        "help": "\u003cb\u003eCookie lifetime examples:\u003c/b\u003e\u003cbr\u003e 2 years \u003d 63072000 seconds \u003cbr\u003e1 year \u003d 31536000 seconds \u003cbr\u003e6 month \u003d 15780000 seconds \u003cbr\u003e3 month \u003d 7890000 seconds \u003cbr\u003e1 month \u003d 2630000 seconds \u003cbr\u003e2 weeks \u003d 1209600 seconds",
+        "displayName": "Cookies"
       }
-    ],
-    "help": "\u003cb\u003eCookie lifetime examples:\u003c/b\u003e\u003cbr\u003e 2 years \u003d 63072000 seconds \u003cbr\u003e1 year \u003d 31536000 seconds \u003cbr\u003e6 month \u003d 15780000 seconds \u003cbr\u003e3 month \u003d 7890000 seconds \u003cbr\u003e1 month \u003d 2630000 seconds \u003cbr\u003e2 weeks \u003d 1209600 seconds"
+    ]
   },
   {
     "type": "GROUP",
@@ -189,6 +190,46 @@ ___TEMPLATE_PARAMETERS___
         "displayName": "Stape Store Collection Name",
         "simpleValueType": true,
         "help": "The name of the collection on the Stape Store that contains (or will contain) the document with the data.\n\u003cbr/\u003e\u003cbr/\u003e\nIf not set, the \u003ci\u003edefault\u003c/i\u003e Collection Name will be used."
+      },
+      {
+        "type": "SELECT",
+        "name": "useDifferentStapeStore",
+        "displayName": "Use the Stape Store database of a different container",
+        "macrosInSelect": true,
+        "selectItems": [
+          {
+            "value": true,
+            "displayValue": "True"
+          },
+          {
+            "value": false,
+            "displayValue": "False"
+          }
+        ],
+        "simpleValueType": true,
+        "subParams": [
+          {
+            "type": "TEXT",
+            "name": "stapeStoreContainerApiKey",
+            "displayName": "Stape Store Container API Key",
+            "simpleValueType": true,
+            "valueHint": "euk:kzlfoobar:55ec021d429be49e64e691429cf0f27440a1b789kzlfoobar",
+            "help": "If you want to interact with the Stape Store of a different container hosted on Stape, specify the \u003cb\u003eContainer API Key\u003c/b\u003e of this container.\n\u003cbr/\u003e\u003cbr/\u003e\nTo find the \u003cb\u003eContainer API Key\u003c/b\u003e, go to the \u003ca href\u003d\"https://app.eu.stape.dev/container\"\u003eStape Admin panel\u003c/a\u003e, select the sGTM container which the Stape Store you want to interact with, go to the \u003ci\u003eSettings\u003c/i\u003e tab and scroll down to the \u003ci\u003eContainer settings\u003c/i\u003e section.",
+            "enablingConditions": [
+              {
+                "paramName": "useDifferentStapeStore",
+                "paramValue": false,
+                "type": "NOT_EQUALS"
+              }
+            ],
+            "valueValidators": [
+              {
+                "type": "NON_EMPTY"
+              }
+            ]
+          }
+        ],
+        "defaultValue": false
       }
     ],
     "enablingConditions": [
@@ -538,11 +579,28 @@ function mergeIdentifiers(oldIdentifiers, newIdentifiers) {
 }
 
 function getStapeStoreBaseUrl(data) {
-  const containerIdentifier = getRequestHeader('x-gtm-identifier');
-  const defaultDomain = getRequestHeader('x-gtm-default-domain');
-  const containerApiKey = getRequestHeader('x-gtm-api-key');
+  let containerIdentifier;
+  let defaultDomain;
+  let containerApiKey;
   const collectionPath =
     'collections/' + enc(data.stapeStoreCollectionName || 'default') + '/documents';
+
+  const shouldUseDifferentStore =
+    isUIFieldTrue(data.useDifferentStapeStore) &&
+    getType(data.stapeStoreContainerApiKey) === 'string';
+  if (shouldUseDifferentStore) {
+    const containerApiKeyParts = data.stapeStoreContainerApiKey.split(':');
+
+    const containerLocation = containerApiKeyParts[0];
+    const containerRegion = containerApiKeyParts[3] || 'io';
+    containerIdentifier = containerApiKeyParts[1];
+    defaultDomain = containerLocation + '.stape.' + containerRegion;
+    containerApiKey = containerApiKeyParts[2];
+  } else {
+    containerIdentifier = getRequestHeader('x-gtm-identifier');
+    defaultDomain = getRequestHeader('x-gtm-default-domain');
+    containerApiKey = getRequestHeader('x-gtm-api-key');
+  }
 
   return (
     'https://' +
@@ -564,6 +622,10 @@ function getStapeStoreDocumentUrl(data, documentId) {
 /*==============================================================================
   Helpers
 ==============================================================================*/
+
+function isUIFieldTrue(field) {
+  return [true, 'true', 1, '1'].indexOf(field) !== -1;
+}
 
 function getObjectLength(object) {
   let length = 0;

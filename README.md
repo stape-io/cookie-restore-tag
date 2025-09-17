@@ -1,6 +1,6 @@
-# Cookie reStore Tag for Google Tag Manager Server Container
+# Cookie ReStore Tag for Google Tag Manager Server Container
 
-The **Cookie Restore tag** is designed to store user identifiers and cookies in a persistent storage service (either **Stape Store** or **Firebase**) and restore them when needed. This functionality is essential for maintaining user identity across different domains, devices, or browsing sessions, making it a powerful tool for cross-domain and cross-device tracking.
+The **Cookie ReStore tag** is designed to store user identifiers and cookies in a persistent storage service (either **Stape Store** or **Firebase**) and restore them when needed. This functionality is essential for maintaining user identity across different domains, devices, or browsing sessions, making it a powerful tool for cross-domain and cross-device tracking.
 
 ## How It Works
 
@@ -28,10 +28,10 @@ Uses Google's Firestore to store and retrieve data.
 - **List of identifiers**: A table where you define the user identifiers (e.g., `user_id`, `email`, `_ga`) and their corresponding values. At least one identifier is required for the tag to function.
 - **List cookies that need to be restored**: A table specifying the names of the cookies you want to store and restore, along with their lifetime in seconds.
 
-## How to use the Cookie Restore tag
+## How to use the Cookie ReStore tag
 
 - [Server-side cross-domain tracking using the Cookie reStore tag](https://stape.io/blog/server-side-cross-domain-tracking-using-cookie-restore-tag)
 
 ## Open Source
 
-The **Cookie reStore Tag for GTM Server Side** is developed and maintained by [Stape Team](https://stape.io/) under the Apache 2.0 license.
+The **Cookie ReStore Tag for GTM Server Side** is developed and maintained by [Stape Team](https://stape.io/) under the Apache 2.0 license.
