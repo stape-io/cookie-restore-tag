@@ -109,11 +109,17 @@ function restoreCookies(document) {
     data.cookies.forEach(function (cookieObject) {
       const cookies = getCookieValues(cookieObject.name, true);
 
-      if (cookies && cookies.length > 0) {
-        cookiesToStore[cookieObject.name] = cookies;
-      } else if (storedData.cookies && storedData.cookies[cookieObject.name]) {
+      const hasCookiesToStore = cookies && cookies.length > 0;
+      const hasStoredCookiesToRestore = storedData.cookies && storedData.cookies[cookieObject.name];
+      const shouldRestoreFromStore =
+        hasStoredCookiesToRestore &&
+        (data.overwriteExistingCookiesWithValueFromStore || !hasCookiesToStore);
+
+      if (shouldRestoreFromStore) {
         setCookieFunc(cookieObject, storedData.cookies[cookieObject.name][0]);
         cookiesToStore[cookieObject.name] = storedData.cookies[cookieObject.name];
+      } else if (hasCookiesToStore) {
+        cookiesToStore[cookieObject.name] = cookies;
       }
     });
   }

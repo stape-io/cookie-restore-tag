@@ -50,7 +50,14 @@ ___TEMPLATE_PARAMETERS___
     "name": "onlyRestore",
     "checkboxText": "Only restore cookies",
     "simpleValueType": true,
-    "help": "It will prevent writing cookies to the Firestore. Useful if you want to synch cookies between sites only in one direction."
+    "help": "It will prevent writing cookies to Firestore or Stape Store. Useful if you want to synch cookies between sites only in one direction."
+  },
+  {
+    "type": "CHECKBOX",
+    "name": "overwriteExistingCookiesWithValueFromStore",
+    "checkboxText": "Overwrite existing cookies with the restored values",
+    "simpleValueType": true,
+    "help": "By default, the tag preserves \u003cb\u003eexisting\u003c/b\u003e cookies and does not replace them with values retrieved from Firestore or Stape Store.  \n\u003cbr/\u003e\u003cbr/\u003e  \nEnable this option if you want the tag to overwrite existing cookies whenever a corresponding value is found in Firestore or Stape Store.  \nThis ensures that the stored values always take priority over what is already in the browser."
   },
   {
     "type": "GROUP",
@@ -451,11 +458,17 @@ function restoreCookies(document) {
     data.cookies.forEach(function (cookieObject) {
       const cookies = getCookieValues(cookieObject.name, true);
 
-      if (cookies && cookies.length > 0) {
-        cookiesToStore[cookieObject.name] = cookies;
-      } else if (storedData.cookies && storedData.cookies[cookieObject.name]) {
+      const hasCookiesToStore = cookies && cookies.length > 0;
+      const hasStoredCookiesToRestore = storedData.cookies && storedData.cookies[cookieObject.name];
+      const shouldRestoreFromStore =
+        hasStoredCookiesToRestore &&
+        (data.overwriteExistingCookiesWithValueFromStore || !hasCookiesToStore);
+
+      if (shouldRestoreFromStore) {
         setCookieFunc(cookieObject, storedData.cookies[cookieObject.name][0]);
         cookiesToStore[cookieObject.name] = storedData.cookies[cookieObject.name];
+      } else if (hasCookiesToStore) {
+        cookiesToStore[cookieObject.name] = cookies;
       }
     });
   }
