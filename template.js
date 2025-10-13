@@ -1,3 +1,5 @@
+/// <reference path="./server-gtm-sandboxed-apis.d.ts" />
+
 const setCookie = require('setCookie');
 const getCookieValues = require('getCookieValues');
 const Firestore = require('Firestore');
@@ -7,87 +9,113 @@ const JSON = require('JSON');
 const encodeUriComponent = require('encodeUriComponent');
 const logToConsole = require('logToConsole');
 const getContainerVersion = require('getContainerVersion');
-const Object = require('Object');
 const makeString = require('makeString');
 const generateRandom = require('generateRandom');
+const getType = require('getType');
 const getTimestampMillis = require('getTimestampMillis');
+const BigQuery = require('BigQuery');
 
-const isLoggingEnabled = determinateIsLoggingEnabled();
-const traceId = isLoggingEnabled ? getRequestHeader('trace-id') : undefined;
-const storeUrl = getStoreUrl();
+/*==============================================================================
+==============================================================================*/
 
 const identifiersValues = getIdentifiersValues(data.identifiers);
 if (identifiersValues.length === 0) {
   data.gtmOnSuccess();
-
   return;
 }
 
-let firebaseOptions = { limit: 1 };
+const firebaseOptions = { limit: 1 };
 if (data.flowType === 'firebase') {
-  if (data.firebaseProjectId)
-    firebaseOptions.projectId = data.firebaseProjectId;
+  if (data.firebaseProjectId) firebaseOptions.projectId = data.firebaseProjectId;
   Firestore.query(
     data.firebasePath,
     [['identifiersValues', 'array-contains-any', identifiersValues]],
-    firebaseOptions,
+    firebaseOptions
   ).then(
     (documents) => {
-      return restoreCookies(
-        documents && documents.length > 0 ? documents[0] : {},
-      );
+      return restoreCookies(documents && documents.length > 0 ? documents[0] : {});
     },
     () => {
       return restoreCookies({});
-    },
+    }
   );
 } else {
-  let filters = getStoreFilter(identifiersValues);
+  const storeUrl = getStapeStoreBaseUrl(data);
+  const postBody = {
+    filter: {
+      operator: 'and',
+      conditions: [
+        {
+          field: 'identifiersValues',
+          operator: 'array-contains-any',
+          value: identifiersValues
+        }
+      ]
+    },
+    pagination: {
+      limit: 1
+    }
+  };
+
+  log({
+    Name: 'CookieRestore',
+    Type: 'Request',
+    EventName: 'CookieRestorePOST',
+    RequestMethod: 'POST',
+    RequestUrl: storeUrl,
+    RequestBody: postBody
+  });
+
   sendHttpRequest(
     storeUrl,
     { method: 'POST', headers: { 'Content-Type': 'application/json' } },
-    JSON.stringify({
-      limit: 1,
-      data: filters,
-    }),
-  ).then((documents) => {
-    let body = JSON.parse(documents.body);
-    let preparedData = { data: {}, key: '' };
-    if (body && body.length > 0) {
-      preparedData = body[0].data;
-      preparedData.key = body[0].key;
-    }
+    JSON.stringify(postBody)
+  ).then((response) => {
+    const body = JSON.parse(response.body || '{}');
+    const document =
+      getType(body) === 'object' &&
+      getType(body.data) === 'object' &&
+      getType(body.data.items) === 'array' &&
+      getType(body.data.items[0]) === 'object'
+        ? body.data.items[0]
+        : {};
+
     log({
       Name: 'CookieRestore',
       Type: 'Response',
-      TraceId: traceId,
       EventName: 'CookieRestorePOST',
-      RequestMethod: 'POST',
-      RequestUrl: storeUrl,
-      RequestBody: documents,
+      ResponseStatusCode: response.statusCode,
+      ResponseHeaders: {},
+      ResponseBody: response.body
     });
-    return restoreCookies({ data: preparedData });
+    return restoreCookies(document);
   });
 }
 
+/*==============================================================================
+  Vendor related functions
+==============================================================================*/
+
 function restoreCookies(document) {
-  let storedData = document.data || {};
-  let mergedIdentifiers = mergeIdentifiers(
-    storedData.identifiers,
-    data.identifiers,
-  );
-  let cookiesToStore = {};
+  const storedData = document.data || {};
+  const mergedIdentifiers = mergeIdentifiers(storedData.identifiers, data.identifiers);
+  const cookiesToStore = {};
 
   if (data.cookies && data.cookies.length > 0) {
     data.cookies.forEach(function (cookieObject) {
-      let cookies = getCookieValues(cookieObject.name, true);
+      const cookies = getCookieValues(cookieObject.name, true);
 
-      if (cookies && cookies.length > 0) {
-        cookiesToStore[cookieObject.name] = cookies;
-      } else if (storedData.cookies && storedData.cookies[cookieObject.name]) {
+      const hasCookiesToStore = cookies && cookies.length > 0;
+      const hasStoredCookiesToRestore = storedData.cookies && storedData.cookies[cookieObject.name];
+      const shouldRestoreFromStore =
+        hasStoredCookiesToRestore &&
+        (data.overwriteExistingCookiesWithValueFromStore || !hasCookiesToStore);
+
+      if (shouldRestoreFromStore) {
         setCookieFunc(cookieObject, storedData.cookies[cookieObject.name][0]);
-        cookiesToStore[cookieObject.name] =
-          storedData.cookies[cookieObject.name];
+        cookiesToStore[cookieObject.name] = storedData.cookies[cookieObject.name];
+      } else if (hasCookiesToStore) {
+        cookiesToStore[cookieObject.name] = cookies;
       }
     });
   }
@@ -97,37 +125,46 @@ function restoreCookies(document) {
 
     return;
   }
-  let cookiesDataToStore = {
+
+  const cookiesDataToStore = {
     identifiers: mergedIdentifiers,
     identifiersValues: getIdentifiersValues(mergedIdentifiers),
-    cookies: cookiesToStore,
+    cookies: cookiesToStore
   };
+
   if (data.flowType === 'firebase') {
-    Firestore.write(
-      document.id || data.firebasePath,
-      cookiesDataToStore,
-      firebaseOptions,
-    ).then(() => {
-      data.gtmOnSuccess();
-    }, data.gtmOnFailure);
+    Firestore.write(document.id || data.firebasePath, cookiesDataToStore, firebaseOptions).then(
+      data.gtmOnSuccess,
+      data.gtmOnFailure
+    );
   } else {
-    let documentKey = storedData.key || generateDocumentKey();
-    let storeDocumentUrl = storeUrl + '/' + enc(documentKey);
+    const documentId = document.key || generateDocumentKey();
+    const storeDocumentUrl = getStapeStoreDocumentUrl(data, documentId);
+
+    log({
+      Name: 'CookieRestore',
+      Type: 'Request',
+      EventName: 'CookierRestorePUT',
+      RequestMethod: 'PUT',
+      RequestUrl: storeDocumentUrl,
+      RequestBody: cookiesDataToStore
+    });
+
     sendHttpRequest(
       storeDocumentUrl,
       { method: 'PUT', headers: { 'Content-Type': 'application/json' } },
-      JSON.stringify(cookiesDataToStore),
-    ).then(function (response) {
-      let statusCode = response.statusCode;
+      JSON.stringify(cookiesDataToStore)
+    ).then((response) => {
+      const statusCode = response.statusCode;
       log({
         Name: 'CookierRestore',
         Type: 'Response',
-        TraceId: traceId,
         EventName: 'CookierRestorePUT',
         ResponseStatusCode: statusCode,
         ResponseHeaders: {},
-        ResponseBody: JSON.stringify(response),
+        ResponseBody: response.body
       });
+
       if (statusCode >= 200 && statusCode < 300) {
         data.gtmOnSuccess();
       } else {
@@ -135,10 +172,6 @@ function restoreCookies(document) {
       }
     });
   }
-}
-
-function getStoreFilter(values) {
-  return [['identifiersValues', 'array-contains-any', values]];
 }
 
 function generateDocumentKey() {
@@ -156,14 +189,14 @@ function setCookieFunc(cookieObject, cookieData) {
       samesite: 'Lax',
       secure: true,
       'max-age': cookieObject.lifetime,
-      httpOnly: false,
+      httpOnly: false
     },
-    true,
+    true
   );
 }
 
 function getIdentifiersValues(identifiers) {
-  let identifiersValues = [];
+  const identifiersValues = [];
 
   if (identifiers && identifiers.length > 0) {
     identifiers.forEach(function (identifier) {
@@ -203,6 +236,55 @@ function mergeIdentifiers(oldIdentifiers, newIdentifiers) {
   return identifiers;
 }
 
+function getStapeStoreBaseUrl(data) {
+  let containerIdentifier;
+  let defaultDomain;
+  let containerApiKey;
+  const collectionPath =
+    'collections/' + enc(data.stapeStoreCollectionName || 'default') + '/documents';
+
+  const shouldUseDifferentStore =
+    isUIFieldTrue(data.useDifferentStapeStore) &&
+    getType(data.stapeStoreContainerApiKey) === 'string';
+  if (shouldUseDifferentStore) {
+    const containerApiKeyParts = data.stapeStoreContainerApiKey.split(':');
+
+    const containerLocation = containerApiKeyParts[0];
+    const containerRegion = containerApiKeyParts[3] || 'io';
+    containerIdentifier = containerApiKeyParts[1];
+    defaultDomain = containerLocation + '.stape.' + containerRegion;
+    containerApiKey = containerApiKeyParts[2];
+  } else {
+    containerIdentifier = getRequestHeader('x-gtm-identifier');
+    defaultDomain = getRequestHeader('x-gtm-default-domain');
+    containerApiKey = getRequestHeader('x-gtm-api-key');
+  }
+
+  return (
+    'https://' +
+    enc(containerIdentifier) +
+    '.' +
+    enc(defaultDomain) +
+    '/stape-api/' +
+    enc(containerApiKey) +
+    '/v2/store/' +
+    collectionPath
+  );
+}
+
+function getStapeStoreDocumentUrl(data, documentId) {
+  const storeBaseUrl = getStapeStoreBaseUrl(data);
+  return storeBaseUrl + '/' + enc(documentId);
+}
+
+/*==============================================================================
+  Helpers
+==============================================================================*/
+
+function isUIFieldTrue(field) {
+  return [true, 'true', 1, '1'].indexOf(field) !== -1;
+}
+
 function getObjectLength(object) {
   let length = 0;
 
@@ -214,31 +296,69 @@ function getObjectLength(object) {
   return length;
 }
 
-function getStoreUrl() {
-  const containerIdentifier = getRequestHeader('x-gtm-identifier');
-  const defaultDomain = getRequestHeader('x-gtm-default-domain');
-  const containerApiKey = getRequestHeader('x-gtm-api-key');
-
-  return (
-    'https://' +
-    enc(containerIdentifier) +
-    '.' +
-    enc(defaultDomain) +
-    '/stape-api/' +
-    enc(containerApiKey) +
-    '/v1/store'
-  );
-}
-
 function enc(data) {
-  data = data || '';
-  return encodeUriComponent(data);
+  return encodeUriComponent(makeString(data || ''));
 }
 
-function log(logObject) {
-  if (isLoggingEnabled) {
-    logToConsole(JSON.stringify(logObject));
+function log(rawDataToLog) {
+  const logDestinationsHandlers = {};
+  if (determinateIsLoggingEnabled()) logDestinationsHandlers.console = logConsole;
+  if (determinateIsLoggingEnabledForBigQuery()) logDestinationsHandlers.bigQuery = logToBigQuery;
+
+  rawDataToLog.TraceId = getRequestHeader('trace-id');
+
+  const keyMappings = {
+    // No transformation for Console is needed.
+    bigQuery: {
+      Name: 'tag_name',
+      Type: 'type',
+      TraceId: 'trace_id',
+      EventName: 'event_name',
+      RequestMethod: 'request_method',
+      RequestUrl: 'request_url',
+      RequestBody: 'request_body',
+      ResponseStatusCode: 'response_status_code',
+      ResponseHeaders: 'response_headers',
+      ResponseBody: 'response_body'
+    }
+  };
+
+  for (const logDestination in logDestinationsHandlers) {
+    const handler = logDestinationsHandlers[logDestination];
+    if (!handler) continue;
+
+    const mapping = keyMappings[logDestination];
+    const dataToLog = mapping ? {} : rawDataToLog;
+
+    if (mapping) {
+      for (const key in rawDataToLog) {
+        const mappedKey = mapping[key] || key;
+        dataToLog[mappedKey] = rawDataToLog[key];
+      }
+    }
+
+    handler(dataToLog);
   }
+}
+
+function logConsole(dataToLog) {
+  logToConsole(JSON.stringify(dataToLog));
+}
+
+function logToBigQuery(dataToLog) {
+  const connectionInfo = {
+    projectId: data.logBigQueryProjectId,
+    datasetId: data.logBigQueryDatasetId,
+    tableId: data.logBigQueryTableId
+  };
+
+  dataToLog.timestamp = getTimestampMillis();
+
+  ['request_body', 'response_headers', 'response_body'].forEach((p) => {
+    dataToLog[p] = JSON.stringify(dataToLog[p]);
+  });
+
+  BigQuery.insert(connectionInfo, [dataToLog], { ignoreUnknownValues: true });
 }
 
 function determinateIsLoggingEnabled() {
@@ -261,4 +381,9 @@ function determinateIsLoggingEnabled() {
   }
 
   return data.logType === 'always';
+}
+
+function determinateIsLoggingEnabledForBigQuery() {
+  if (data.bigQueryLogType === 'no') return false;
+  return data.bigQueryLogType === 'always';
 }
