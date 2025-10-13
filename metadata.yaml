@@ -1,7 +1,7 @@
 homepage: 'https://stape.io/'
 documentation: 'https://github.com/stape-io/cookie-restore-tag'
 versions:
-  - sha: 8fbb5246afb29f0192e831887147e0d019d56fde
+  - sha: 5864d64da7eb31586479fa2e139012f2d205f62d
     changeNotes: Added Stape Store 2.0 support. Added BigQuery logging support. Added overwrite existing cookies with restored values support.
   - sha: 8dba30f43cf48d6f1414469058728ef46315dd50
     changeNotes: Added stape store option and logging.
