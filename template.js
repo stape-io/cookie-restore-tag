@@ -18,8 +18,6 @@ const BigQuery = require('BigQuery');
 /*==============================================================================
 ==============================================================================*/
 
-const traceId = getRequestHeader('trace-id');
-
 const identifiersValues = getIdentifiersValues(data.identifiers);
 if (identifiersValues.length === 0) {
   data.gtmOnSuccess();
@@ -62,7 +60,6 @@ if (data.flowType === 'firebase') {
   log({
     Name: 'CookieRestore',
     Type: 'Request',
-    TraceId: traceId,
     EventName: 'CookieRestorePOST',
     RequestMethod: 'POST',
     RequestUrl: storeUrl,
@@ -86,7 +83,6 @@ if (data.flowType === 'firebase') {
     log({
       Name: 'CookieRestore',
       Type: 'Response',
-      TraceId: traceId,
       EventName: 'CookieRestorePOST',
       ResponseStatusCode: response.statusCode,
       ResponseHeaders: {},
@@ -148,7 +144,6 @@ function restoreCookies(document) {
     log({
       Name: 'CookieRestore',
       Type: 'Request',
-      TraceId: traceId,
       EventName: 'CookierRestorePUT',
       RequestMethod: 'PUT',
       RequestUrl: storeDocumentUrl,
@@ -164,7 +159,6 @@ function restoreCookies(document) {
       log({
         Name: 'CookierRestore',
         Type: 'Response',
-        TraceId: traceId,
         EventName: 'CookierRestorePUT',
         ResponseStatusCode: statusCode,
         ResponseHeaders: {},
@@ -310,6 +304,8 @@ function log(rawDataToLog) {
   const logDestinationsHandlers = {};
   if (determinateIsLoggingEnabled()) logDestinationsHandlers.console = logConsole;
   if (determinateIsLoggingEnabledForBigQuery()) logDestinationsHandlers.bigQuery = logToBigQuery;
+
+  rawDataToLog.TraceId = getRequestHeader('trace-id');
 
   const keyMappings = {
     // No transformation for Console is needed.
