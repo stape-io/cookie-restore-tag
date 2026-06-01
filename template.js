@@ -7,13 +7,10 @@ const getRequestHeader = require('getRequestHeader');
 const sendHttpRequest = require('sendHttpRequest');
 const JSON = require('JSON');
 const encodeUriComponent = require('encodeUriComponent');
-const logToConsole = require('logToConsole');
-const getContainerVersion = require('getContainerVersion');
 const makeString = require('makeString');
 const generateRandom = require('generateRandom');
 const getType = require('getType');
 const getTimestampMillis = require('getTimestampMillis');
-const BigQuery = require('BigQuery');
 
 /*==============================================================================
 ==============================================================================*/
@@ -57,15 +54,6 @@ if (data.flowType === 'firebase') {
     }
   };
 
-  log({
-    Name: 'CookieRestore',
-    Type: 'Request',
-    EventName: 'CookieRestorePOST',
-    RequestMethod: 'POST',
-    RequestUrl: storeUrl,
-    RequestBody: postBody
-  });
-
   sendHttpRequest(
     storeUrl,
     { method: 'POST', headers: { 'Content-Type': 'application/json' } },
@@ -79,15 +67,6 @@ if (data.flowType === 'firebase') {
       getType(body.data.items[0]) === 'object'
         ? body.data.items[0]
         : {};
-
-    log({
-      Name: 'CookieRestore',
-      Type: 'Response',
-      EventName: 'CookieRestorePOST',
-      ResponseStatusCode: response.statusCode,
-      ResponseHeaders: {},
-      ResponseBody: response.body
-    });
     return restoreCookies(document);
   });
 }
@@ -141,30 +120,12 @@ function restoreCookies(document) {
     const documentId = document.key || generateDocumentKey();
     const storeDocumentUrl = getStapeStoreDocumentUrl(data, documentId);
 
-    log({
-      Name: 'CookieRestore',
-      Type: 'Request',
-      EventName: 'CookierRestorePUT',
-      RequestMethod: 'PUT',
-      RequestUrl: storeDocumentUrl,
-      RequestBody: cookiesDataToStore
-    });
-
     sendHttpRequest(
       storeDocumentUrl,
       { method: 'PUT', headers: { 'Content-Type': 'application/json' } },
       JSON.stringify(cookiesDataToStore)
     ).then((response) => {
       const statusCode = response.statusCode;
-      log({
-        Name: 'CookierRestore',
-        Type: 'Response',
-        EventName: 'CookierRestorePUT',
-        ResponseStatusCode: statusCode,
-        ResponseHeaders: {},
-        ResponseBody: response.body
-      });
-
       if (statusCode >= 200 && statusCode < 300) {
         data.gtmOnSuccess();
       } else {
@@ -297,93 +258,6 @@ function getObjectLength(object) {
 }
 
 function enc(data) {
-  return encodeUriComponent(makeString(data || ''));
-}
-
-function log(rawDataToLog) {
-  const logDestinationsHandlers = {};
-  if (determinateIsLoggingEnabled()) logDestinationsHandlers.console = logConsole;
-  if (determinateIsLoggingEnabledForBigQuery()) logDestinationsHandlers.bigQuery = logToBigQuery;
-
-  rawDataToLog.TraceId = getRequestHeader('trace-id');
-
-  const keyMappings = {
-    // No transformation for Console is needed.
-    bigQuery: {
-      Name: 'tag_name',
-      Type: 'type',
-      TraceId: 'trace_id',
-      EventName: 'event_name',
-      RequestMethod: 'request_method',
-      RequestUrl: 'request_url',
-      RequestBody: 'request_body',
-      ResponseStatusCode: 'response_status_code',
-      ResponseHeaders: 'response_headers',
-      ResponseBody: 'response_body'
-    }
-  };
-
-  for (const logDestination in logDestinationsHandlers) {
-    const handler = logDestinationsHandlers[logDestination];
-    if (!handler) continue;
-
-    const mapping = keyMappings[logDestination];
-    const dataToLog = mapping ? {} : rawDataToLog;
-
-    if (mapping) {
-      for (const key in rawDataToLog) {
-        const mappedKey = mapping[key] || key;
-        dataToLog[mappedKey] = rawDataToLog[key];
-      }
-    }
-
-    handler(dataToLog);
-  }
-}
-
-function logConsole(dataToLog) {
-  logToConsole(JSON.stringify(dataToLog));
-}
-
-function logToBigQuery(dataToLog) {
-  const connectionInfo = {
-    projectId: data.logBigQueryProjectId,
-    datasetId: data.logBigQueryDatasetId,
-    tableId: data.logBigQueryTableId
-  };
-
-  dataToLog.timestamp = getTimestampMillis();
-
-  ['request_body', 'response_headers', 'response_body'].forEach((p) => {
-    dataToLog[p] = JSON.stringify(dataToLog[p]);
-  });
-
-  BigQuery.insert(connectionInfo, [dataToLog], { ignoreUnknownValues: true });
-}
-
-function determinateIsLoggingEnabled() {
-  const containerVersion = getContainerVersion();
-  const isDebug = !!(
-    containerVersion &&
-    (containerVersion.debugMode || containerVersion.previewMode)
-  );
-
-  if (!data.logType) {
-    return isDebug;
-  }
-
-  if (data.logType === 'no') {
-    return false;
-  }
-
-  if (data.logType === 'debug') {
-    return isDebug;
-  }
-
-  return data.logType === 'always';
-}
-
-function determinateIsLoggingEnabledForBigQuery() {
-  if (data.bigQueryLogType === 'no') return false;
-  return data.bigQueryLogType === 'always';
+  if (['null', 'undefined'].indexOf(getType(data)) !== -1) data = '';
+  return encodeUriComponent(makeString(data));
 }
